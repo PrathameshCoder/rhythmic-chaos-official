@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { releases, getReleaseBySlug, dspMeta } from "../../data/releases";
+import { getReleaseBySlug, getStaticSlugs } from "../../data/releases";
+import { buttonLabel } from "../../lib/dsp";
 import { site } from "../../data/site";
 import {
   SpotifyIcon,
@@ -14,20 +15,38 @@ import {
   ArrowRightIcon,
 } from "../../components/Icons";
 
+// ISR: pre-render known slugs, allow new ones on-demand, revalidate periodically.
+export const revalidate = 60;
+export const dynamicParams = true;
+
 interface Props {
   params: Promise<{ slug: string }>;
 }
 
-export function generateStaticParams() {
-  return releases.map((r) => ({ slug: r.slug }));
+export async function generateStaticParams() {
+  const slugs = await getStaticSlugs();
+  return slugs.map((slug) => ({ slug }));
+}
+
+function formatFullDate(date: string) {
+  return new Date(date + "T00:00:00").toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const release = getReleaseBySlug(slug);
+  const release = await getReleaseBySlug(slug);
   if (!release) return {};
   const title = `${release.title} — ${site.name}`;
-  const description = `Listen to "${release.title}" by ${site.name} on your favorite platform. ${release.description}`;
+  const description =
+    release.status === "upcoming"
+      ? `"${release.title}" by ${site.name} — out ${formatFullDate(
+          release.releaseDate
+        )}. Pre-save now.`
+      : `Listen to "${release.title}" by ${site.name} on your favorite platform. ${release.description}`;
   return {
     title,
     description,
@@ -41,28 +60,34 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-const dspIcons: Record<string, React.ComponentType<{ className?: string }>> = {
-  spotify: SpotifyIcon,
-  appleMusic: AppleMusicIcon,
-  youtubeMusic: YouTubeIcon,
-  youtube: YouTubeIcon,
-  soundcloud: SoundCloudIcon,
+// Map platform display names to the existing brand icons.
+const platformIcons: Record<
+  string,
+  React.ComponentType<{ className?: string }>
+> = {
+  Spotify: SpotifyIcon,
+  "Apple Music": AppleMusicIcon,
+  "YouTube Music": YouTubeIcon,
+  YouTube: YouTubeIcon,
+  SoundCloud: SoundCloudIcon,
 };
-
-function formatFullDate(date: string) {
-  return new Date(date + "T00:00:00").toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-}
 
 export default async function ReleasePage({ params }: Props) {
   const { slug } = await params;
-  const release = getReleaseBySlug(slug);
-  if (!release) notFound();
+  const release = await getReleaseBySlug(slug);
 
-  const availableLinks = dspMeta.filter(({ key }) => release.links[key]);
+  // RLS already hides drafts / non-public releases, but guard defensively.
+  if (
+    !release ||
+    release.status === "draft" ||
+    (release.status === "archived" && !release.smartLinkPublic) ||
+    (release.status === "upcoming" && !release.smartLinkPublic)
+  ) {
+    notFound();
+  }
+
+  const isUpcoming = release.status === "upcoming";
+  const links = release.links;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-black">
@@ -94,34 +119,48 @@ export default async function ReleasePage({ params }: Props) {
 
         {/* Title */}
         <div className="mt-8 text-center">
+          {isUpcoming && (
+            <span className="mb-3 inline-block rounded-full border border-[#8A7DFF]/40 bg-[#8A7DFF]/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[#b9b0ff]">
+              Upcoming Release
+            </span>
+          )}
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#8A7DFF]">
             {release.type} · {formatFullDate(release.releaseDate)}
           </p>
           <h1 className="mt-3 text-3xl font-bold tracking-tight text-white md:text-4xl">
             {release.title}
           </h1>
-          <p className="mt-1 text-lg text-white/60">{site.name}</p>
-          <p className="mx-auto mt-4 max-w-sm text-sm leading-relaxed text-white/50">
-            {release.description}
-          </p>
+          <p className="mt-1 text-lg text-white/60">{release.artistName}</p>
+          {isUpcoming && (
+            <p className="mt-2 text-sm font-medium text-[#b9b0ff]">
+              Out on {formatFullDate(release.releaseDate)}
+            </p>
+          )}
+          {release.description && (
+            <p className="mx-auto mt-4 max-w-sm text-sm leading-relaxed text-white/50">
+              {release.description}
+            </p>
+          )}
         </div>
 
-        {/* DSP buttons */}
+        {/* Links */}
         <div className="mt-10 w-full space-y-3">
-          {availableLinks.length > 0 ? (
-            availableLinks.map(({ key, label }) => {
-              const Icon = dspIcons[key] ?? MusicNoteIcon;
+          {links.length > 0 ? (
+            links.map((link, i) => {
+              const Icon = platformIcons[link.platform] ?? MusicNoteIcon;
               return (
                 <a
-                  key={key}
-                  href={release.links[key]}
+                  key={i}
+                  href={link.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="group flex w-full items-center justify-between rounded-xl border border-white/12 bg-black/40 px-5 py-4 transition-all duration-300 hover:border-white/30 hover:bg-black/60 hover:shadow-[0_0_25px_-8px_rgba(138,125,255,0.4)]"
                 >
                   <span className="flex items-center gap-3">
                     <Icon className="h-5 w-5 text-white/80" />
-                    <span className="font-medium text-white">{label}</span>
+                    <span className="font-medium text-white">
+                      {buttonLabel(link)}
+                    </span>
                   </span>
                   <ExternalLinkIcon className="h-4 w-4 text-white/30 transition-colors group-hover:text-white/70" />
                 </a>
@@ -129,7 +168,9 @@ export default async function ReleasePage({ params }: Props) {
             })
           ) : (
             <p className="text-center text-sm text-white/45">
-              Streaming links coming soon.
+              {isUpcoming
+                ? "Pre-save links coming soon."
+                : "Streaming links coming soon."}
             </p>
           )}
         </div>

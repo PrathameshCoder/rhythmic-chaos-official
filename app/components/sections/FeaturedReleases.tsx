@@ -5,8 +5,8 @@ import Reveal from "../Reveal";
 import SectionHeading from "../SectionHeading";
 import { ArrowRightIcon } from "../Icons";
 
-export default function FeaturedReleases() {
-  const featured = getFeaturedReleases(4);
+export default async function FeaturedReleases() {
+  const featured = await getFeaturedReleases(4);
 
   return (
     <section id="music" className="scroll-mt-24 px-6 py-24 md:py-32">

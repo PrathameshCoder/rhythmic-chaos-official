@@ -7,6 +7,14 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "i.scdn.co", // Spotify cover art CDN
       },
+      {
+        protocol: "https",
+        hostname: "*.supabase.co", // Supabase Storage cover uploads
+      },
+      {
+        protocol: "https",
+        hostname: "placehold.co", // fallback placeholder covers
+      },
     ],
   },
 };
